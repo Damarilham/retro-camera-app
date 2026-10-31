@@ -97,6 +97,8 @@ export default function Photobox() {
   const videoRef = useRef(null);
   const depthRef = useRef(null);
   const [isAiLoaded, setIsAiLoaded] = useState(false);
+  const [device, setDevice] = useState('');
+  const [portrait, setPortrait] = useState(false);
 
   const [phase, setPhase] = useState('menu'); // menu | shoot | result
   const [mode, setMode] = useState(1);
@@ -109,18 +111,28 @@ export default function Photobox() {
   const [activeIdx, setActiveIdx] = useState(0);
   const [layout, setLayout] = useState(1);
   const [format, setFormat] = useState('gif');
+  const [duration, setDuration] = useState(15);
   const [isExporting, setIsExporting] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(orientation: portrait) and (pointer: coarse)');
+    const on = () => setPortrait(mq.matches);
+    on();
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const { pipeline } = await import('@huggingface/transformers');
-      const load = (device) =>
-        pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', { device });
-      let est;
-      try { est = await load('webgpu'); } catch { est = await load('wasm'); }
+      const load = (d) =>
+        pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', { device: d });
+      let est, dev = 'webgpu';
+      try { est = await load('webgpu'); } catch { dev = 'wasm'; est = await load('wasm'); }
       if (cancelled) return;
       depthRef.current = est;
+      setDevice(dev);
       setIsAiLoaded(true);
     })();
     return () => { cancelled = true; };
@@ -150,7 +162,15 @@ export default function Photobox() {
     return () => clearInterval(id);
   }, [phase, speed]);
 
+  const lockLandscape = () => {
+    if (!window.matchMedia('(pointer: coarse)').matches) return;
+    Promise.resolve(document.documentElement.requestFullscreen?.())
+      .then(() => screen.orientation?.lock?.('landscape'))
+      .catch(() => {});
+  };
+
   const startMode = (m) => {
+    lockLandscape();
     setMode(m);
     setShots([]);
     setLayout(m);
@@ -164,7 +184,6 @@ export default function Photobox() {
     for (let c = 3; c > 0; c--) { setCount(c); await sleep(1000); }
     setCount(null);
     setFlash(true);
-    await sleep(140);
 
     const width = 640, height = 480;
     try {
@@ -176,6 +195,10 @@ export default function Photobox() {
       fctx.translate(width, 0); fctx.scale(-1, 1);
       fctx.drawImage(v, (v.videoWidth - cw) / 2, 0, cw, v.videoHeight, 0, 0, width, height);
       const src = fctx.getImageData(0, 0, width, height).data;
+
+      await sleep(140);
+      setFlash(false);
+      await sleep(50);
 
       const { depth } = await depthRef.current(frozen.toDataURL('image/jpeg', 0.9));
       const dCanvas = document.createElement('canvas');
@@ -204,6 +227,7 @@ export default function Photobox() {
         ctx.fillStyle = g;
         ctx.fillRect(0, 0, width, height);
         generated.push(canvas.toDataURL('image/jpeg', 0.92));
+        await sleep(0);
       }
 
       const next = [...shots, generated];
@@ -258,8 +282,9 @@ export default function Photobox() {
         });
         encoder.configure({ codec: 'avc1.640028', width: W, height: H, bitrate: 6_000_000 });
 
-        const FPS = 30, LOOPS = 8;
+        const FPS = 30;
         const hold = Math.max(1, Math.round((speed * FPS) / 1000));
+        const LOOPS = Math.ceil((duration * FPS) / (seq.length * hold));
         const step = 1e6 / FPS;
         let n = 0;
         for (let l = 0; l < LOOPS; l++) {
@@ -270,6 +295,7 @@ export default function Photobox() {
               encoder.encode(vf);
               vf.close();
               n++;
+              if (encoder.encodeQueueSize > 30) await sleep(10);
             }
           }
         }
@@ -285,16 +311,30 @@ export default function Photobox() {
   };
 
   return (
-    <main className="flex min-h-screen flex-col items-center bg-[#16213a] px-4 py-10 text-white">
-      <style>{`@keyframes lensFade{from{opacity:0}to{opacity:1}}`}</style>
+    <main className="flex min-h-screen flex-col items-center bg-[#16213a] px-4 py-6 text-white">
+      <style>{`
+        @keyframes lensFade{from{opacity:0}to{opacity:1}}
+        @keyframes tilt{0%,30%{transform:rotate(0)}70%,100%{transform:rotate(-90deg)}}
+      `}</style>
       {flash && <div className="pointer-events-none fixed inset-0 z-50 bg-white" />}
+
+      {portrait && (
+        <div className="fixed inset-0 z-[60] flex flex-col items-center justify-center gap-6 bg-[#16213a] p-8 text-center">
+          <div className="h-20 w-12 rounded-xl border-4 border-white" style={{ animation: 'tilt 2.4s ease-in-out infinite' }} />
+          <p className="text-xl font-bold">Putar perangkat ke mode horizontal</p>
+          <p className="text-white/60">Photobox dirancang untuk layar landscape.</p>
+        </div>
+      )}
 
       <h1 className="text-3xl font-extrabold tracking-tight">Photobox</h1>
 
       {phase === 'menu' && (
-        <section className="mt-10 flex w-full max-w-3xl flex-col items-center">
-          <p className="mb-8 text-center text-white/70">
+        <section className="mt-6 flex w-full max-w-3xl flex-col items-center">
+          <p className="mb-2 text-center text-white/70">
             {isAiLoaded ? 'Pilih berapa kali kamu mau menjepret.' : 'Menyiapkan model AI, tunggu sebentar...'}
+          </p>
+          <p className="mb-6 h-5 text-center text-sm text-white/40">
+            {device === 'wasm' && 'Perangkat ini memproses foto lewat CPU, jadi tiap jepretan bisa butuh beberapa detik.'}
           </p>
           <div className="grid w-full gap-5 sm:grid-cols-3">
             {MODES.map((m) => (
@@ -318,11 +358,8 @@ export default function Photobox() {
       )}
 
       {phase === 'shoot' && (
-        <section className="mt-8 flex w-full max-w-[640px] flex-col items-center">
-          <p className="mb-3 text-lg font-semibold">
-            Foto {Math.min(shots.length + 1, mode)} dari {mode}
-          </p>
-          <div className="relative aspect-[4/3] w-full overflow-hidden rounded-xl bg-black ring-4 ring-white">
+        <section className="mt-4 flex w-full max-w-5xl flex-col items-center gap-6 landscape:flex-row landscape:justify-center">
+          <div className="relative aspect-[4/3] h-[min(62vh,480px)] shrink-0 overflow-hidden rounded-xl bg-black ring-4 ring-white">
             <video
               ref={videoRef}
               autoPlay
@@ -335,40 +372,50 @@ export default function Photobox() {
                 {count}
               </div>
             )}
+            {busy && !count && (
+              <div className="absolute inset-0 flex animate-pulse items-center justify-center bg-black/60 text-xl font-semibold">
+                Memproses foto...
+              </div>
+            )}
           </div>
 
-          <button
-            onClick={snap}
-            disabled={busy}
-            aria-label="Jepret"
-            className="mt-8 flex h-20 w-20 items-center justify-center rounded-full bg-white p-1.5 transition active:scale-95 disabled:opacity-50"
-          >
-            <span className="h-full w-full rounded-full bg-[#e5383b]" />
-          </button>
-          <p className="mt-3 h-5 text-sm text-white/60">
-            {busy ? (count ? 'Bersiap...' : 'Memproses foto...') : 'Tekan untuk mulai hitung mundur'}
-          </p>
+          <div className="flex flex-col items-center">
+            <p className="mb-4 text-lg font-semibold">
+              Foto {Math.min(shots.length + 1, mode)} dari {mode}
+            </p>
+            <button
+              onClick={snap}
+              disabled={busy}
+              aria-label="Jepret"
+              className="flex h-20 w-20 items-center justify-center rounded-full bg-white p-1.5 transition active:scale-95 disabled:opacity-50"
+            >
+              <span className="h-full w-full rounded-full bg-[#e5383b]" />
+            </button>
+            <p className="mt-3 h-5 text-sm text-white/60">
+              {busy ? (count ? 'Bersiap...' : 'Mohon tunggu') : 'Tekan untuk mulai hitung mundur'}
+            </p>
 
-          {shots.length > 0 && (
-            <div className="mt-4 flex gap-2">
-              {shots.map((s, i) => (
-                <img key={i} src={s[1]} alt={`Foto ${i + 1}`} className="h-14 w-[75px] rounded object-cover ring-2 ring-white" />
-              ))}
-            </div>
-          )}
+            {shots.length > 0 && (
+              <div className="mt-4 flex gap-2">
+                {shots.map((s, i) => (
+                  <img key={i} src={s[1]} alt={`Foto ${i + 1}`} className="h-14 w-[75px] rounded object-cover ring-2 ring-white" />
+                ))}
+              </div>
+            )}
 
-          <button
-            onClick={() => setPhase('menu')}
-            disabled={busy}
-            className="mt-8 text-sm text-white/60 underline-offset-4 hover:text-white hover:underline disabled:opacity-40"
-          >
-            Kembali ke menu
-          </button>
+            <button
+              onClick={() => setPhase('menu')}
+              disabled={busy}
+              className="mt-6 text-sm text-white/60 underline-offset-4 hover:text-white hover:underline disabled:opacity-40"
+            >
+              Kembali ke menu
+            </button>
+          </div>
         </section>
       )}
 
       {phase === 'result' && (
-        <section className="mt-8 flex w-full flex-col items-center gap-8 md:flex-row md:items-start md:justify-center">
+        <section className="mt-6 flex w-full flex-col items-center gap-8 landscape:flex-row landscape:items-start landscape:justify-center md:flex-row md:items-start md:justify-center">
           <div className="flex w-[260px] flex-col gap-3 bg-white p-4 shadow-2xl">
             {Array.from({ length: layout }).map((_, r) => (
               <Slot key={r} frames={shots[r % shots.length]} idx={activeIdx} />
@@ -399,6 +446,19 @@ export default function Photobox() {
                 ))}
               </div>
             </div>
+
+            {format === 'mp4' && (
+              <div>
+                <p className="mb-2 text-sm text-white/60">Durasi video</p>
+                <div className="flex gap-2">
+                  {[15, 20].map((d) => (
+                    <button key={d} onClick={() => setDuration(d)} className={chip(duration === d)}>
+                      {d} detik
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div>
               <p className="mb-2 text-sm text-white/60">Kecepatan</p>

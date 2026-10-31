@@ -11,6 +11,7 @@
   "dependencies": {
     "@huggingface/transformers": "^4.3.1",
     "@mediapipe/selfie_segmentation": "^0.1.1675465747",
+    "@vercel/analytics": "^2.0.1",
     "gifenc": "^1.0.3",
     "mp4-muxer": "^5.2.2",
     "next": "16.4.1",
