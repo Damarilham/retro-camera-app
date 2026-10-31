@@ -4,6 +4,7 @@ import React, { useState, useRef, useEffect } from 'react';
 
 const WARP = 14;
 const FRAMES = 4;
+const FLASH_MS = 1500;
 const CELL_W = 560, CELL_H = 420, PAD = 40, GAP = 24;
 
 const MODES = [
@@ -187,6 +188,7 @@ export default function Photobox() {
 
     const width = 640, height = 480;
     try {
+      await sleep(FLASH_MS);
       const v = videoRef.current;
       const cw = (v.videoHeight * 4) / 3;
       const frozen = document.createElement('canvas');
@@ -196,7 +198,6 @@ export default function Photobox() {
       fctx.drawImage(v, (v.videoWidth - cw) / 2, 0, cw, v.videoHeight, 0, 0, width, height);
       const src = fctx.getImageData(0, 0, width, height).data;
 
-      await sleep(140);
       setFlash(false);
       await sleep(50);
 
