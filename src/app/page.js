@@ -106,6 +106,7 @@ export default function Photobox() {
   const [shots, setShots] = useState([]);
   const [count, setCount] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [facing, setFacing] = useState('user'); // user = depan, environment = belakang
   const [flash, setFlash] = useState(false);
 
   const [speed, setSpeed] = useState(100);
@@ -127,10 +128,15 @@ export default function Photobox() {
     let cancelled = false;
     (async () => {
       const { pipeline } = await import('@huggingface/transformers');
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+        (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
       const load = (d) =>
-        pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', { device: d });
-      let est, dev = 'webgpu';
-      try { est = await load('webgpu'); } catch { dev = 'wasm'; est = await load('wasm'); }
+        pipeline('depth-estimation', 'onnx-community/depth-anything-v2-small', {
+          device: d,
+          ...(d === 'wasm' && { dtype: 'q8' }),
+        });
+      let est, dev = isIOS ? 'wasm' : 'webgpu';
+      try { est = await load(dev); } catch { dev = 'wasm'; est = await load('wasm'); }
       if (cancelled) return;
       depthRef.current = est;
       setDevice(dev);
@@ -142,7 +148,7 @@ export default function Photobox() {
   useEffect(() => {
     if (phase !== 'shoot') return;
     let stream, dead = false;
-    navigator.mediaDevices.getUserMedia({ video: { width: 1280, height: 720 } })
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing }, width: 1280, height: 720 } })
       .then((s) => {
         if (dead) { s.getTracks().forEach((t) => t.stop()); return; }
         stream = s;
@@ -150,7 +156,7 @@ export default function Photobox() {
       })
       .catch((err) => console.error('Gagal akses kamera:', err));
     return () => { dead = true; stream?.getTracks().forEach((t) => t.stop()); };
-  }, [phase]);
+  }, [phase, facing]);
 
   useEffect(() => {
     if (phase !== 'result') return;
@@ -184,17 +190,17 @@ export default function Photobox() {
     setBusy(true);
     for (let c = 3; c > 0; c--) { setCount(c); await sleep(1000); }
     setCount(null);
-    setFlash(true);
+    setFlash(facing === 'user');
 
     const width = 640, height = 480;
     try {
-      await sleep(FLASH_MS);
+      await sleep(facing === 'user' ? FLASH_MS : 300);
       const v = videoRef.current;
       const cw = (v.videoHeight * 4) / 3;
       const frozen = document.createElement('canvas');
       frozen.width = width; frozen.height = height;
       const fctx = frozen.getContext('2d', { willReadFrequently: true });
-      fctx.translate(width, 0); fctx.scale(-1, 1);
+      if (facing === 'user') { fctx.translate(width, 0); fctx.scale(-1, 1); }
       fctx.drawImage(v, (v.videoWidth - cw) / 2, 0, cw, v.videoHeight, 0, 0, width, height);
       const src = fctx.getImageData(0, 0, width, height).data;
 
@@ -366,7 +372,7 @@ export default function Photobox() {
               autoPlay
               playsInline
               muted
-              className="h-full w-full scale-x-[-1] object-cover"
+              className={`h-full w-full object-cover ${facing === 'user' ? 'scale-x-[-1]' : ''}`}
             />
             {count && (
               <div className="absolute inset-0 flex items-center justify-center bg-black/30 text-9xl font-extrabold text-white">
@@ -403,6 +409,14 @@ export default function Photobox() {
                 ))}
               </div>
             )}
+
+            <button
+              onClick={() => setFacing((f) => (f === 'user' ? 'environment' : 'user'))}
+              disabled={busy}
+              className="mt-4 rounded-full bg-white/10 px-4 py-1.5 text-sm font-semibold hover:bg-white/20 disabled:opacity-40 [@media(pointer:fine)]:hidden"
+            >
+              {facing === 'user' ? 'Pakai kamera belakang' : 'Pakai kamera depan'}
+            </button>
 
             <button
               onClick={() => setPhase('menu')}
